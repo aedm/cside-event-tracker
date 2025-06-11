@@ -11,14 +11,21 @@ use crate::{
     storage::{RetrieveError, Storage, StoreError},
 };
 
+// An internal identifier for events.
 type EventId = u64;
+static NEXT_EVENT_ID: AtomicU64 = AtomicU64::new(1);
 
 // Made-up restriction to demonstrate error handling.
 const MAX_QUERIED_EVENTS: usize = 4;
-
+/// Stores events in an indexed manner for efficient queries.
 struct IndexedEvents {
+    /// Stores events by their internal identifier.
     event_by_id: AHashMap<EventId, Event>,
+
+    /// Stores events by their timestamp. This allows for efficient range queries.
     events_by_timestamp: BTreeMap<Timestamp, Vec<EventId>>,
+
+    /// Stores events by their type and timestamp. This allows for efficient range queries by type.
     events_by_type_by_timestamp: AHashMap<String, BTreeMap<Timestamp, Vec<EventId>>>,
 }
 
@@ -40,8 +47,6 @@ impl InMemoryStorage {
         }
     }
 }
-
-static NEXT_EVENT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[async_trait::async_trait]
 impl Storage for InMemoryStorage {
@@ -99,6 +104,8 @@ impl Storage for InMemoryStorage {
             Some(end) => Bound::Included(end),
             _ => Bound::Unbounded,
         };
+
+        // Get events in the specified range. Make sure not to return more than MAX_QUERIED_EVENTS.
         let result: Vec<_> = events
             .range((start, end))
             .flat_map(|(_, event_ids)| {
@@ -118,55 +125,70 @@ impl Storage for InMemoryStorage {
     }
 }
 
+#[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
+    use crate::event::Event;
 
-    #[test]
-    fn test_in_memory_storage() {
+    #[tokio::test]
+    async fn test_filtering() {
         let event_1 = Event {
             event_type: "login".to_string(),
             timestamp: 4,
-            payload: json!({ "user_id": 123, "ip": "127.0.0.4" }),
+            payload: serde_json::json!({ "user_id": 123, "ip": "127.0.0.4" }),
         };
         let event_2 = Event {
             event_type: "login".to_string(),
             timestamp: 5,
-            payload: json!({ "user_id": 123, "ip": "127.0.0.5" }),
+            payload: serde_json::json!({ "user_id": 123, "ip": "127.0.0.5" }),
         };
         let event_3 = Event {
             event_type: "foo".to_string(),
             timestamp: 6,
-            payload: json!({ "user_id": 123, "ip": "127.0.0.6" }),
+            payload: serde_json::json!({ "user_id": 123, "ip": "127.0.0.6" }),
         };
         let store = InMemoryStorage::new();
 
-        store.store(event_1.clone());
-        store.store(event_2.clone());
-        store.store(event_3.clone());
+        store.store(event_1.clone()).await.unwrap();
+        store.store(event_2.clone()).await.unwrap();
+        store.store(event_3.clone()).await.unwrap();
 
         assert_eq!(
-            store.get_events(None, None, None),
-            vec![event_1, event_2, event_3]
-        );
-        assert_eq!(store.get_events(None, Some(5), None), vec![event_2]);
-        assert_eq!(store.get_events(None, None, Some(5)), vec![event_2]);
-        assert_eq!(
-            store.get_events(Some("login"), None, None),
-            vec![event_1, event_2]
+            store.get_events(None, None, None).await.unwrap(),
+            vec![event_1.clone(), event_2.clone(), event_3.clone()]
         );
         assert_eq!(
-            store.get_events(Some("login"), Some(5), None),
-            vec![event_2]
+            store.get_events(None, Some(5), None).await.unwrap(),
+            vec![event_2.clone(), event_3.clone()]
         );
         assert_eq!(
-            store.get_events(Some("login"), None, Some(5)),
-            vec![event_2]
+            store.get_events(None, None, Some(5)).await.unwrap(),
+            vec![event_1.clone(), event_2.clone()]
         );
         assert_eq!(
-            store.get_events(Some("login"), Some(5), Some(5)),
-            vec![event_2]
+            store.get_events(Some("login"), None, None).await.unwrap(),
+            vec![event_1.clone(), event_2.clone()]
+        );
+        assert_eq!(
+            store
+                .get_events(Some("login"), Some(5), None)
+                .await
+                .unwrap(),
+            vec![event_2.clone()]
+        );
+        assert_eq!(
+            store
+                .get_events(Some("login"), None, Some(5))
+                .await
+                .unwrap(),
+            vec![event_1.clone(), event_2.clone()]
+        );
+        assert_eq!(
+            store
+                .get_events(Some("login"), Some(5), Some(5))
+                .await
+                .unwrap(),
+            vec![event_2.clone()]
         );
     }
 }

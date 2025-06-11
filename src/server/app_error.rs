@@ -23,6 +23,7 @@ pub enum AppError {
     ResultTooLarge(u64),
 }
 
+/// Converts errors into HTTP responses.
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         // Error code is the enum variant name in SCREAMING_SNAKE_CASE.
@@ -35,6 +36,7 @@ impl IntoResponse for AppError {
     }
 }
 
+/// Converts storage errors into application errors.
 impl From<StoreError> for AppError {
     fn from(error: StoreError) -> Self {
         match error {
@@ -43,6 +45,7 @@ impl From<StoreError> for AppError {
     }
 }
 
+/// Converts retrieval errors into application errors.
 impl From<RetrieveError> for AppError {
     fn from(error: RetrieveError) -> Self {
         match error {
