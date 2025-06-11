@@ -1,20 +1,31 @@
+use ahash::AHashMap;
 use std::{
     collections::BTreeMap,
     ops::Bound,
-    sync::{
-        RwLock,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::atomic::{AtomicU64, Ordering},
 };
-use ahash::AHashMap;
+use tokio::sync::RwLock;
 
-use crate::{event::{Event, Timestamp}, storage::Storage};
+use crate::{
+    event::{Event, Timestamp},
+    storage::{RetrieveError, Storage, StoreError},
+};
 
+// An internal identifier for events.
 type EventId = u64;
+static NEXT_EVENT_ID: AtomicU64 = AtomicU64::new(1);
 
+// Made-up restriction to demonstrate error handling.
+const MAX_QUERIED_EVENTS: usize = 4;
+/// Stores events in an indexed manner for efficient queries.
 struct IndexedEvents {
+    /// Stores events by their internal identifier.
     event_by_id: AHashMap<EventId, Event>,
+
+    /// Stores events by their timestamp. This allows for efficient range queries.
     events_by_timestamp: BTreeMap<Timestamp, Vec<EventId>>,
+
+    /// Stores events by their type and timestamp. This allows for efficient range queries by type.
     events_by_type_by_timestamp: AHashMap<String, BTreeMap<Timestamp, Vec<EventId>>>,
 }
 
@@ -37,117 +48,147 @@ impl InMemoryStorage {
     }
 }
 
-static NEXT_EVENT_ID: AtomicU64 = AtomicU64::new(1);
-
+#[async_trait::async_trait]
 impl Storage for InMemoryStorage {
-    fn store(&self, event: Event) {
-        let event_id = NEXT_EVENT_ID.fetch_add(1, Ordering::Relaxed);
+    async fn store(&self, event: Event) -> Result<(), StoreError> {
+        if event.event_type == "winter wrap up" {
+            // In-memory storage doesn't support this event type.
+            // It's a made-up restriction to demonstrate error handling.
+            return Err(StoreError::InvalidEventType(event.event_type));
+        }
 
-        let mut events = self.events.write().unwrap();
-        events
+        let event_id = NEXT_EVENT_ID.fetch_add(1, Ordering::Relaxed);
+        let event_type = event.event_type.clone();
+
+        let mut events_guard = self.events.write().await;
+        events_guard
             .events_by_type_by_timestamp
-            .entry(event.event_type.to_string())
+            .entry(event_type)
             .or_default()
             .entry(event.timestamp)
             .or_default()
             .push(event_id);
-        events
+        events_guard
             .events_by_timestamp
             .entry(event.timestamp)
             .or_default()
             .push(event_id);
-        events.event_by_id.insert(event_id, event);
+        events_guard.event_by_id.insert(event_id, event);
+        Ok(())
     }
 
-    fn get_events(
+    async fn get_events(
         &self,
         event_type: Option<&str>,
         start: Option<Timestamp>,
         end: Option<Timestamp>,
-    ) -> Vec<Event> {
-        let events_lock = self.events.read().unwrap();
+    ) -> Result<Vec<Event>, RetrieveError> {
+        let events_guard = self.events.read().await;
 
         // Filter by event type, if specified
         let events = if let Some(event_type) = event_type {
-            match events_lock.events_by_type_by_timestamp.get(event_type) {
+            match events_guard.events_by_type_by_timestamp.get(event_type) {
                 Some(events) => events,
-                None => return vec![],
+                None => return Ok(vec![]),
             }
         } else {
-            &events_lock.events_by_timestamp
+            &events_guard.events_by_timestamp
         };
 
         // Filter by timestamp range, if specified
         let start = match start {
             Some(start) => Bound::Included(start),
-            None => Bound::Unbounded,
+            _ => Bound::Unbounded,
         };
         let end = match end {
             Some(end) => Bound::Included(end),
-            None => Bound::Unbounded,
+            _ => Bound::Unbounded,
         };
-        events
+
+        // Get events in the specified range. Make sure not to return more than MAX_QUERIED_EVENTS.
+        let result: Vec<_> = events
             .range((start, end))
             .flat_map(|(_, event_ids)| {
-                event_ids.iter().map(|event_id| {
-                    let k = events_lock.event_by_id.get(event_id).unwrap().clone();
-                    k
-                })
+                event_ids
+                    .iter()
+                    // All ids should exist so a flat_map is appropriate.
+                    .flat_map(|event_id| events_guard.event_by_id.get(event_id).cloned())
             })
-            .collect()
+            .take(MAX_QUERIED_EVENTS + 1)
+            .collect();
+
+        if result.len() > MAX_QUERIED_EVENTS {
+            return Err(RetrieveError::ResultTooLarge(MAX_QUERIED_EVENTS as u64));
+        }
+
+        Ok(result)
     }
 }
 
-
+#[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
+    use crate::event::Event;
 
-    #[test]
-    fn test_in_memory_storage() {
+    #[tokio::test]
+    async fn test_filtering() {
         let event_1 = Event {
             event_type: "login".to_string(),
             timestamp: 4,
-            payload: json!({ "user_id": 123, "ip": "127.0.0.4" }),
+            payload: serde_json::json!({ "user_id": 123, "ip": "127.0.0.4" }),
         };
         let event_2 = Event {
             event_type: "login".to_string(),
             timestamp: 5,
-            payload: json!({ "user_id": 123, "ip": "127.0.0.5" }),
+            payload: serde_json::json!({ "user_id": 123, "ip": "127.0.0.5" }),
         };
         let event_3 = Event {
             event_type: "foo".to_string(),
             timestamp: 6,
-            payload: json!({ "user_id": 123, "ip": "127.0.0.6" }),
+            payload: serde_json::json!({ "user_id": 123, "ip": "127.0.0.6" }),
         };
         let store = InMemoryStorage::new();
 
-        store.store(event_1.clone());
-        store.store(event_2.clone());
-        store.store(event_3.clone());
+        store.store(event_1.clone()).await.unwrap();
+        store.store(event_2.clone()).await.unwrap();
+        store.store(event_3.clone()).await.unwrap();
 
         assert_eq!(
-            store.get_events(None, None, None),
-            vec![event_1, event_2, event_3]
-        );
-        assert_eq!(store.get_events(None, Some(5), None), vec![event_2]);
-        assert_eq!(store.get_events(None, None, Some(5)), vec![event_2]);
-        assert_eq!(
-            store.get_events(Some("login"), None, None),
-            vec![event_1, event_2]
+            store.get_events(None, None, None).await.unwrap(),
+            vec![event_1.clone(), event_2.clone(), event_3.clone()]
         );
         assert_eq!(
-            store.get_events(Some("login"), Some(5), None),
-            vec![event_2]
+            store.get_events(None, Some(5), None).await.unwrap(),
+            vec![event_2.clone(), event_3.clone()]
         );
         assert_eq!(
-            store.get_events(Some("login"), None, Some(5)),
-            vec![event_2]
+            store.get_events(None, None, Some(5)).await.unwrap(),
+            vec![event_1.clone(), event_2.clone()]
         );
         assert_eq!(
-            store.get_events(Some("login"), Some(5), Some(5)),
-            vec![event_2]
+            store.get_events(Some("login"), None, None).await.unwrap(),
+            vec![event_1.clone(), event_2.clone()]
+        );
+        assert_eq!(
+            store
+                .get_events(Some("login"), Some(5), None)
+                .await
+                .unwrap(),
+            vec![event_2.clone()]
+        );
+        assert_eq!(
+            store
+                .get_events(Some("login"), None, Some(5))
+                .await
+                .unwrap(),
+            vec![event_1.clone(), event_2.clone()]
+        );
+        assert_eq!(
+            store
+                .get_events(Some("login"), Some(5), Some(5))
+                .await
+                .unwrap(),
+            vec![event_2.clone()]
         );
     }
 }
