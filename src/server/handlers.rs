@@ -3,8 +3,8 @@ use axum::{
     extract::{Query, State},
 };
 use serde::Deserialize;
-use tracing::instrument;
 use std::sync::Arc;
+use tracing::instrument;
 
 use crate::{
     event::Event,
