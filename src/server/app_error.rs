@@ -1,4 +1,5 @@
 use axum::{Json, http::StatusCode, response::IntoResponse};
+use tracing::warn;
 
 use crate::storage::{RetrieveError, StoreError};
 
@@ -32,6 +33,7 @@ impl IntoResponse for AppError {
         let status_code = StatusCode::INTERNAL_SERVER_ERROR;
         let json = serde_json::json!({ "error": error_code, "message": message });
 
+        warn!("Returning error {error_code}: {message}");
         (status_code, Json(json)).into_response()
     }
 }
