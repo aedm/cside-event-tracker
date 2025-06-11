@@ -18,6 +18,7 @@ static NEXT_EVENT_ID: AtomicU64 = AtomicU64::new(1);
 
 // Made-up restriction to demonstrate error handling.
 const MAX_QUERIED_EVENTS: usize = 4;
+
 /// Stores events in an indexed manner for efficient queries.
 struct IndexedEvents {
     /// Stores events by their internal identifier.

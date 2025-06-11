@@ -45,8 +45,8 @@ Things I didn't find time to do:
 
 - Use SmallVec to store event ids for better performance.
 - Add a libsql-based storage.
-- Add tracing.
 - Add observability.
 - Add docker containerization.
-- Make API tests run in CI.
 - Move API tests to `/tests` for better organization.
+- Add IP-based rate limiting.
+- Store JSON payload as string (not as JSON value) for faster retrieval.

@@ -46,7 +46,7 @@ pub async fn serve() -> Result<()> {
 
     axum::serve(listener, app)
         .await
-        .with_context(|| "Failed to start server")
+        .context("Failed to start server")
 }
 
 #[cfg(test)]
