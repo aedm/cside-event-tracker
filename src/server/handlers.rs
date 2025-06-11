@@ -3,6 +3,7 @@ use axum::{
     extract::{Query, State},
 };
 use serde::Deserialize;
+use tracing::instrument;
 use std::sync::Arc;
 
 use crate::{
@@ -10,7 +11,7 @@ use crate::{
     server::{AppState, app_error::AppError},
 };
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct QueryParams {
     event_type: Option<String>,
     start: Option<u64>,
@@ -21,6 +22,7 @@ pub struct QueryParams {
 ///
 /// The list is filtered by event type and timestamp range, if specified.
 #[axum::debug_handler]
+#[instrument(skip(state))]
 pub async fn get_events(
     State(state): State<Arc<AppState>>,
     Query(params): Query<QueryParams>,
@@ -35,6 +37,7 @@ pub async fn get_events(
 
 /// Inserts a new event into the event storage.
 #[axum::debug_handler]
+#[instrument(skip(state))]
 pub async fn post_event(
     State(state): State<Arc<AppState>>,
     Json(event): Json<Event>,

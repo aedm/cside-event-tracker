@@ -1,4 +1,5 @@
 use ahash::AHashMap;
+use tracing::{debug, instrument};
 use std::{
     collections::BTreeMap,
     ops::Bound,
@@ -50,7 +51,9 @@ impl InMemoryStorage {
 
 #[async_trait::async_trait]
 impl Storage for InMemoryStorage {
+    #[instrument(skip_all)]
     async fn store(&self, event: Event) -> Result<(), StoreError> {
+        debug!("Storing event");
         if event.event_type == "winter wrap up" {
             // In-memory storage doesn't support this event type.
             // It's a made-up restriction to demonstrate error handling.
@@ -77,12 +80,14 @@ impl Storage for InMemoryStorage {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     async fn get_events(
         &self,
         event_type: Option<&str>,
         start: Option<Timestamp>,
         end: Option<Timestamp>,
     ) -> Result<Vec<Event>, RetrieveError> {
+        debug!("Getting events");
         let events_guard = self.events.read().await;
 
         // Filter by event type, if specified
@@ -121,6 +126,7 @@ impl Storage for InMemoryStorage {
             return Err(RetrieveError::ResultTooLarge(MAX_QUERIED_EVENTS as u64));
         }
 
+        debug!("Found {} events", result.len());
         Ok(result)
     }
 }

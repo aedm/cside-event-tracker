@@ -3,6 +3,7 @@ mod handlers;
 
 use anyhow::{Context, Result};
 use axum::{Router, response::IntoResponse, routing::get};
+use tracing::info;
 use std::sync::Arc;
 
 use crate::{
@@ -34,10 +35,11 @@ pub fn make_server() -> Router {
 }
 
 /// Starts the server on the default port.
+#[tracing::instrument]
 pub async fn serve() -> Result<()> {
     let app = make_server();
 
-    println!("Listening on http://localhost:{}", PORT);
+    info!("Listening on http://localhost:{}", PORT);
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", PORT))
         .await
         .with_context(|| format!("Failed to bind to port {PORT}"))?;
