@@ -16,7 +16,7 @@ pub enum StoreError {
 pub enum RetrieveError {
     ResultTooLarge(u64),
 }
-/// Storage trait for event storage. 
+/// Storage trait for event storage.
 #[async_trait::async_trait]
 pub trait Storage {
     async fn store(&self, event: Event) -> Result<(), StoreError>;

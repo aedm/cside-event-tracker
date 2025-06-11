@@ -1,11 +1,11 @@
 use ahash::AHashMap;
-use tracing::{debug, instrument};
 use std::{
     collections::BTreeMap,
     ops::Bound,
     sync::atomic::{AtomicU64, Ordering},
 };
 use tokio::sync::RwLock;
+use tracing::{debug, instrument};
 
 use crate::{
     event::{Event, Timestamp},

@@ -3,8 +3,8 @@ mod handlers;
 
 use anyhow::{Context, Result};
 use axum::{Router, response::IntoResponse, routing::get};
-use tracing::info;
 use std::sync::Arc;
+use tracing::info;
 
 use crate::{
     server::handlers::{get_events, post_event},
