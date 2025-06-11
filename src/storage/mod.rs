@@ -5,13 +5,22 @@ use crate::event::Timestamp;
 
 pub use in_memory_storage::InMemoryStorage;
 
-pub trait Storage {
-    fn store(&self, event: Event);
+pub enum StoreError {
+    InvalidEventType(String),
+}
 
-    fn get_events(
+pub enum RetrieveError {
+    ResultTooLarge(u64),
+}
+
+#[async_trait::async_trait]
+pub trait Storage {
+    async fn store(&self, event: Event) -> Result<(), StoreError>;
+
+    async fn get_events(
         &self,
         event_type: Option<&str>,
         start: Option<Timestamp>,
         end: Option<Timestamp>,
-    ) -> Vec<Event>;
+    ) -> Result<Vec<Event>, RetrieveError>;
 }

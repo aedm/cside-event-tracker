@@ -1,16 +1,20 @@
+use ahash::AHashMap;
 use std::{
     collections::BTreeMap,
     ops::Bound,
-    sync::{
-        RwLock,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::atomic::{AtomicU64, Ordering},
 };
-use ahash::AHashMap;
+use tokio::sync::RwLock;
 
-use crate::{event::{Event, Timestamp}, storage::Storage};
+use crate::{
+    event::{Event, Timestamp},
+    storage::{RetrieveError, Storage, StoreError},
+};
 
 type EventId = u64;
+
+// Made-up restriction to demonstrate error handling.
+const MAX_QUERIED_EVENTS: usize = 4;
 
 struct IndexedEvents {
     event_by_id: AHashMap<EventId, Event>,
@@ -39,65 +43,80 @@ impl InMemoryStorage {
 
 static NEXT_EVENT_ID: AtomicU64 = AtomicU64::new(1);
 
+#[async_trait::async_trait]
 impl Storage for InMemoryStorage {
-    fn store(&self, event: Event) {
-        let event_id = NEXT_EVENT_ID.fetch_add(1, Ordering::Relaxed);
+    async fn store(&self, event: Event) -> Result<(), StoreError> {
+        if event.event_type == "winter wrap up" {
+            // In-memory storage doesn't support this event type.
+            // It's a made-up restriction to demonstrate error handling.
+            return Err(StoreError::InvalidEventType(event.event_type));
+        }
 
-        let mut events = self.events.write().unwrap();
-        events
+        let event_id = NEXT_EVENT_ID.fetch_add(1, Ordering::Relaxed);
+        let event_type = event.event_type.clone();
+
+        let mut events_guard = self.events.write().await;
+        events_guard
             .events_by_type_by_timestamp
-            .entry(event.event_type.to_string())
+            .entry(event_type)
             .or_default()
             .entry(event.timestamp)
             .or_default()
             .push(event_id);
-        events
+        events_guard
             .events_by_timestamp
             .entry(event.timestamp)
             .or_default()
             .push(event_id);
-        events.event_by_id.insert(event_id, event);
+        events_guard.event_by_id.insert(event_id, event);
+        Ok(())
     }
 
-    fn get_events(
+    async fn get_events(
         &self,
         event_type: Option<&str>,
         start: Option<Timestamp>,
         end: Option<Timestamp>,
-    ) -> Vec<Event> {
-        let events_lock = self.events.read().unwrap();
+    ) -> Result<Vec<Event>, RetrieveError> {
+        let events_guard = self.events.read().await;
 
         // Filter by event type, if specified
         let events = if let Some(event_type) = event_type {
-            match events_lock.events_by_type_by_timestamp.get(event_type) {
+            match events_guard.events_by_type_by_timestamp.get(event_type) {
                 Some(events) => events,
-                None => return vec![],
+                None => return Ok(vec![]),
             }
         } else {
-            &events_lock.events_by_timestamp
+            &events_guard.events_by_timestamp
         };
 
         // Filter by timestamp range, if specified
         let start = match start {
             Some(start) => Bound::Included(start),
-            None => Bound::Unbounded,
+            _ => Bound::Unbounded,
         };
         let end = match end {
             Some(end) => Bound::Included(end),
-            None => Bound::Unbounded,
+            _ => Bound::Unbounded,
         };
-        events
+        let result: Vec<_> = events
             .range((start, end))
             .flat_map(|(_, event_ids)| {
-                event_ids.iter().map(|event_id| {
-                    let k = events_lock.event_by_id.get(event_id).unwrap().clone();
-                    k
-                })
+                event_ids
+                    .iter()
+                    // All ids should exist so a flat_map is appropriate.
+                    .flat_map(|event_id| events_guard.event_by_id.get(event_id).cloned())
             })
-            .collect()
+            .take(MAX_QUERIED_EVENTS + 1)
+            .collect();
+
+        if result.len() > MAX_QUERIED_EVENTS {
+            return Err(RetrieveError::ResultTooLarge(MAX_QUERIED_EVENTS as u64));
+        }
+
+        Ok(result)
     }
 }
-
 
 mod tests {
     use serde_json::json;

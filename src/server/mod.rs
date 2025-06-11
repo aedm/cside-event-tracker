@@ -1,29 +1,27 @@
-use std::sync::Arc;
+mod app_error;
+mod handlers;
 
-use axum::{Json, Router, extract::State, response::IntoResponse, routing::get};
+use axum::{
+    Json, Router,
+    extract::{Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::get,
+};
+use serde::Deserialize;
+use serde_json::json;
+use std::sync::Arc;
+use strum::{AsRefStr, EnumDiscriminants, EnumString, IntoStaticStr};
+use thiserror::Error;
 
 use crate::{
     event::Event,
-    storage::{InMemoryStorage, Storage},
+    server::handlers::{get_events, post_event},
+    storage::{InMemoryStorage, RetrieveError, Storage, StoreError},
 };
 
 struct AppState {
     store: Arc<dyn Storage + Send + Sync + 'static>,
-}
-
-#[axum::debug_handler]
-async fn get_events(State(store): State<Arc<AppState>>) -> impl IntoResponse {
-    let events = store.store.get_events(None, None, None);
-    Json(events)
-}
-
-#[axum::debug_handler]
-async fn post_event(
-    State(store): State<Arc<AppState>>,
-    Json(event): Json<Event>,
-) -> impl IntoResponse {
-    store.store.store(event);
-    ""
 }
 
 async fn welcome() -> impl IntoResponse {
